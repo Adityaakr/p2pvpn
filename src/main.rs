@@ -1,4 +1,3 @@
-mod contract;
 mod tui;
 mod vpn;
 

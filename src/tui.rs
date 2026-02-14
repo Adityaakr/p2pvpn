@@ -1,17 +1,21 @@
 use std::io;
 
+use crate::contract::{self, H256};
+use crate::vpn;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
+use p2pvpn_contract_client::p_2_pvpn_contract::P2PvpnContract;
+use p2pvpn_contract_client::{P2PvpnContractClient, P2PvpnContractClientCtors};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
-
-use crate::contract::{self, H256};
-use crate::vpn;
+use sails_rs::client::{GclientEnv, GearEnv};
+use sails_rs::gclient::GearApi;
+use sails_rs::CodeId;
 
 // ---------------------------------------------------------------------------
 // App state
@@ -37,7 +41,16 @@ struct App {
 }
 
 impl App {
-    fn new() -> Self {
+    async fn new() -> anyhow::Result<Self> {
+        let api = GearApi::dev().await?;
+        let client = GclientEnv::new(api);
+
+        let deployment = client
+            .deploy::<p2pvpn_contract_client::P2PvpnContractClientProgram>(CodeId::zero(), vec![])
+            .create()
+            .await?;
+        deployment.p_2_pvpn_contract().fetch_providers().await?;
+
         let providers = contract::fetch_providers()
             .into_iter()
             .map(|(name, key)| Provider {
@@ -47,12 +60,12 @@ impl App {
             })
             .collect::<Vec<_>>();
 
-        Self {
+        Ok(Self {
             providers,
             selected: 0,
             phase: Phase::Selecting,
             status_msg: String::from("Select a provider and press Enter to connect."),
-        }
+        })
     }
 
     /// Move selection up, skipping failed providers.

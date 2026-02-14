@@ -45,20 +45,59 @@ pub mod p_2_pvpn_contract {
     use super::*;
     pub trait P2PvpnContract {
         type Env: sails_rs::client::GearEnv;
-        fn do_something(&mut self) -> sails_rs::client::PendingCall<io::DoSomething, Self::Env>;
+        /// Fetch the VPN configuration file for a given provider.
+        fn fetch_provider_file(
+            &mut self,
+            provider: H256,
+        ) -> sails_rs::client::PendingCall<io::FetchProviderFile, Self::Env>;
+        /// Fetch the list of available VPN providers.
+        fn fetch_providers(
+            &mut self,
+        ) -> sails_rs::client::PendingCall<io::FetchProviders, Self::Env>;
+        /// Rank a provider positively or negatively after a connection attempt.
+        fn rank_provider(
+            &mut self,
+            good: bool,
+            _provider: H256,
+        ) -> sails_rs::client::PendingCall<io::RankProvider, Self::Env>;
     }
     pub struct P2PvpnContractImpl;
     impl<E: sails_rs::client::GearEnv> P2PvpnContract
         for sails_rs::client::Service<P2PvpnContractImpl, E>
     {
         type Env = E;
-        fn do_something(&mut self) -> sails_rs::client::PendingCall<io::DoSomething, Self::Env> {
+        fn fetch_provider_file(
+            &mut self,
+            provider: H256,
+        ) -> sails_rs::client::PendingCall<io::FetchProviderFile, Self::Env> {
+            self.pending_call((provider,))
+        }
+        fn fetch_providers(
+            &mut self,
+        ) -> sails_rs::client::PendingCall<io::FetchProviders, Self::Env> {
             self.pending_call(())
+        }
+        fn rank_provider(
+            &mut self,
+            good: bool,
+            _provider: H256,
+        ) -> sails_rs::client::PendingCall<io::RankProvider, Self::Env> {
+            self.pending_call((good, _provider))
         }
     }
 
     pub mod io {
         use super::*;
-        sails_rs::io_struct_impl!(DoSomething () -> String);
+        sails_rs::io_struct_impl!(FetchProviderFile (provider: H256) -> super::VpnFile);
+        sails_rs::io_struct_impl!(FetchProviders () -> Vec<(H256,String,)>);
+        sails_rs::io_struct_impl!(RankProvider (good: bool, _provider: H256) -> ());
     }
+}
+/// VPN configuration file fetched from a provider.
+#[derive(PartialEq, Clone, Debug, Encode, Decode, TypeInfo)]
+#[codec(crate = sails_rs::scale_codec)]
+#[scale_info(crate = sails_rs::scale_info)]
+pub enum VpnFile {
+    Wireguard(Vec<u8>),
+    OpenVpn(Vec<u8>),
 }

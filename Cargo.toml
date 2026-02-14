@@ -12,7 +12,7 @@ keywords = ["gear", "sails", "smart-contracts", "wasm", "no-std"]
 categories = ["cryptography::cryptocurrencies", "no-std", "wasm"]
 
 [workspace.dependencies]
-sails-rs = "0.10.2"
+sails-rs = { version = "0.10.2", features = ["ethexe"] }
 tokio = "1.48.0"
 p2pvpn-contract-app = { version = "0.1.0", path = "contract/app" }
 p2pvpn-contract-client = { version = "0.1.0", path = "contract/client" }
@@ -28,3 +28,5 @@ crossterm = "0.28"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 rand = "0.8"
+p2pvpn-contract-client.workspace = true
+sails-rs.workspace = true

@@ -1,8 +1,19 @@
+/// VPN configuration file fetched from a provider.
+type VpnFile = enum {
+  Wireguard: vec u8,
+  OpenVpn: vec u8,
+};
+
 constructor {
   Create : ();
 };
 
 service P2PvpnContract {
-  DoSomething : () -> str;
+  /// Fetch the VPN configuration file for a given provider.
+  FetchProviderFile : (provider: h256) -> VpnFile;
+  /// Fetch the list of available VPN providers.
+  FetchProviders : () -> vec struct { h256, str };
+  /// Rank a provider positively or negatively after a connection attempt.
+  RankProvider : (good: bool, _provider: h256) -> null;
 };
 

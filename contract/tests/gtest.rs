@@ -29,9 +29,9 @@ async fn do_something_works() {
     let mut service_client = program.p_2_pvpn_contract();
 
     let result = service_client
-        .do_something() // Call service's method
+        .fetch_providers()
         .await
         .unwrap();
 
-    assert_eq!(result, "Hello from P2PvpnContract!".to_string());
+    assert_eq!(result, vec![]);
 }
