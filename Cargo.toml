@@ -1,3 +1,22 @@
+[workspace]
+members = ["contract"]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Gear Technologies"]
+edition = "2024"
+rust-version = "1.91"
+license = "MIT"
+repository = "https://github.com"
+keywords = ["gear", "sails", "smart-contracts", "wasm", "no-std"]
+categories = ["cryptography::cryptocurrencies", "no-std", "wasm"]
+
+[workspace.dependencies]
+sails-rs = "0.10.2"
+tokio = "1.48.0"
+p2pvpn-contract-app = { version = "0.1.0", path = "contract/app" }
+p2pvpn-contract-client = { version = "0.1.0", path = "contract/client" }
+
 [package]
 name = "ratatui-vpn"
 version = "0.1.0"
