@@ -39,6 +39,16 @@ pub enum ConnectionAttempt {
     Failed(String),
 }
 
+pub async fn provider_requires_credentials(provider: H256) -> bool {
+    let file = contract::fetch_provider_file(provider).await;
+    match file {
+        contract::VpnFile::OpenVpn(bytes) => std::str::from_utf8(&bytes)
+            .map(profile_requires_credentials)
+            .unwrap_or(false),
+        contract::VpnFile::Wireguard(_) => false,
+    }
+}
+
 struct ParsedOpenVpnConfig {
     rendered_config: String,
     needs_auth_file: bool,
@@ -149,11 +159,7 @@ fn parse_openvpn_config(
             continue;
         }
 
-        let mut parts = trimmed.split_whitespace();
-        let _directive = parts.next();
-        let path_arg = parts.next();
-
-        if path_arg.is_some() {
+        if !auth_user_pass_needs_generated_file(trimmed) {
             rendered.push(line.to_string());
             continue;
         }
@@ -172,6 +178,23 @@ fn parse_openvpn_config(
         rendered_config: rendered.join("\n"),
         needs_auth_file,
     })
+}
+
+fn profile_requires_credentials(profile: &str) -> bool {
+    profile.lines().any(|line| {
+        let trimmed = line.trim();
+        let is_comment = trimmed.starts_with('#') || trimmed.starts_with(';');
+        !is_comment
+            && trimmed.starts_with("auth-user-pass")
+            && auth_user_pass_needs_generated_file(trimmed)
+    })
+}
+
+fn auth_user_pass_needs_generated_file(line: &str) -> bool {
+    let mut parts = line.split_whitespace();
+    let _directive = parts.next();
+    let path_arg = parts.next();
+    path_arg.is_none()
 }
 
 fn write_auth_file(dir: &Path, credentials: &OpenVpnCredentials) -> anyhow::Result<()> {

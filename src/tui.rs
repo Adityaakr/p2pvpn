@@ -25,10 +25,17 @@ struct Provider {
     failed: bool,
 }
 
+#[derive(Clone, Copy)]
 enum Phase {
     Selecting,
+    PromptCredentials(usize),
     Connecting(usize),
     Connected,
+}
+
+enum CredentialField {
+    Username,
+    Password,
 }
 
 struct App {
@@ -38,6 +45,9 @@ struct App {
     status_msg: String,
     credentials: Option<OpenVpnCredentials>,
     active_session: Option<OpenVpnSession>,
+    credential_field: CredentialField,
+    username_input: String,
+    password_input: String,
 }
 
 impl App {
@@ -62,6 +72,9 @@ impl App {
             status_msg: String::from("Select a provider and press Enter to connect."),
             credentials,
             active_session: None,
+            credential_field: CredentialField::Username,
+            username_input: String::new(),
+            password_input: String::new(),
         }
     }
 
@@ -99,6 +112,24 @@ impl App {
 
     fn all_failed(&self) -> bool {
         self.providers.iter().all(|p| p.failed)
+    }
+
+    fn reset_prompt_state(&mut self) {
+        self.credential_field = CredentialField::Username;
+        self.username_input.clear();
+        self.password_input.clear();
+    }
+
+    fn prompt_status(&self) -> String {
+        match self.credential_field {
+            CredentialField::Username => {
+                format!("OpenVPN username: {}", self.username_input)
+            }
+            CredentialField::Password => format!(
+                "OpenVPN password: {}",
+                "*".repeat(self.password_input.chars().count())
+            ),
+        }
     }
 }
 
@@ -181,7 +212,7 @@ pub async fn run(credentials: Option<OpenVpnCredentials>) -> anyhow::Result<()> 
     loop {
         terminal.draw(|f| draw(f, &app))?;
 
-        match &app.phase {
+        match app.phase {
             Phase::Selecting => {
                 if let Event::Key(key) = read_event_blocking()? {
                     if key.kind != KeyEventKind::Press {
@@ -196,17 +227,90 @@ pub async fn run(credentials: Option<OpenVpnCredentials>) -> anyhow::Result<()> 
                                 app.status_msg =
                                     "All providers have failed. Press q to quit.".into();
                             } else {
-                                app.phase = Phase::Connecting(app.selected);
-                                app.status_msg =
-                                    format!("Connecting to {}…", app.providers[app.selected].name);
+                                let selected = app.selected;
+                                if app.credentials.is_none()
+                                    && vpn::provider_requires_credentials(
+                                        app.providers[selected].key,
+                                    )
+                                    .await
+                                {
+                                    app.reset_prompt_state();
+                                    app.phase = Phase::PromptCredentials(selected);
+                                    app.status_msg = app.prompt_status();
+                                } else {
+                                    app.phase = Phase::Connecting(selected);
+                                    app.status_msg =
+                                        format!("Connecting to {}…", app.providers[selected].name);
+                                }
                             }
                         }
                         _ => {}
                     }
                 }
             }
+            Phase::PromptCredentials(idx) => {
+                if let Event::Key(key) = read_event_blocking()? {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+
+                    match key.code {
+                        KeyCode::Esc => {
+                            app.reset_prompt_state();
+                            app.phase = Phase::Selecting;
+                            app.status_msg =
+                                "Credential input cancelled. Select a provider and press Enter."
+                                    .into();
+                        }
+                        KeyCode::Backspace => match app.credential_field {
+                            CredentialField::Username => {
+                                app.username_input.pop();
+                                app.status_msg = app.prompt_status();
+                            }
+                            CredentialField::Password => {
+                                app.password_input.pop();
+                                app.status_msg = app.prompt_status();
+                            }
+                        },
+                        KeyCode::Enter => match app.credential_field {
+                            CredentialField::Username => {
+                                if app.username_input.is_empty() {
+                                    app.status_msg = "Username cannot be empty.".into();
+                                } else {
+                                    app.credential_field = CredentialField::Password;
+                                    app.status_msg = app.prompt_status();
+                                }
+                            }
+                            CredentialField::Password => {
+                                if app.password_input.is_empty() {
+                                    app.status_msg = "Password cannot be empty.".into();
+                                } else {
+                                    app.credentials = Some(OpenVpnCredentials {
+                                        username: app.username_input.clone(),
+                                        password: app.password_input.clone(),
+                                    });
+                                    app.reset_prompt_state();
+                                    app.phase = Phase::Connecting(idx);
+                                    app.status_msg =
+                                        format!("Connecting to {}…", app.providers[idx].name);
+                                }
+                            }
+                        },
+                        KeyCode::Char(ch) => match app.credential_field {
+                            CredentialField::Username => {
+                                app.username_input.push(ch);
+                                app.status_msg = app.prompt_status();
+                            }
+                            CredentialField::Password => {
+                                app.password_input.push(ch);
+                                app.status_msg = app.prompt_status();
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            }
             Phase::Connecting(idx) => {
-                let idx = *idx;
                 // Redraw with "connecting" status, then attempt.
                 terminal.draw(|f| draw(f, &app))?;
 
