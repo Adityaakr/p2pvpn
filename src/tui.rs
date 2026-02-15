@@ -15,6 +15,7 @@ use crossterm::{
 };
 use ethexe_ethereum::{abi::IRouter, TryGetReceipt};
 use ethexe_sdk::VaraEthApi;
+use gprimitives::CodeId;
 //use gprimitives::CodeId;
 use gsigner::secp256k1::Signer;
 use gsigner::{Address, PrivateKey};
@@ -74,7 +75,7 @@ impl App {
         let msg = p2pvpn_contract_client::p_2_pvpn_contract::io::FetchProviderFile::encode_params(
             provider.0,
         );
-        let (_, msg_id) = api
+        /*let (_, msg_id) = api
             .mirror(vpn_contract.into())
             .send_message(&msg, 0)
             .await
@@ -83,7 +84,12 @@ impl App {
             .mirror(vpn_contract.into())
             .wait_for_reply(msg_id)
             .await
-            .unwrap();
+            .unwrap();*/
+        let reply = api
+            .mirror(vpn_contract.into())
+            .calculate_reply_for_handle(&msg, 0)
+            .await?;
+
         if !reply.code.is_success() {
             panic!(
                 "failed to fetch provider file: reply code {}, message: {}",
@@ -456,5 +462,102 @@ pub async fn import_key(private_key: PrivateKey) -> anyhow::Result<()> {
     let public_key = signer.import(private_key)?;
     println!("Imported key: {public_key}");
     println!("Address: {}", public_key.to_address());
+    Ok(())
+}
+
+fn code_id_for(wasm: &[u8]) -> CodeId {
+    type Blake2b256 = Blake2b<U32>;
+
+    let mut hasher = Blake2b256::new();
+    hasher.update(wasm);
+    CodeId::new(hasher.finalize().into())
+}
+
+pub async fn deploy(sender_address: Address) -> anyhow::Result<()> {
+    const RPC: &str = "wss://hoodi-reth-rpc.gear-tech.io/ws";
+
+    let router_address = "0xBC888a8B050B9B76a985d91c815d2c4f2131a58A"
+        .parse()
+        .context("failed to parse router address")?;
+
+    let signer = signer()?;
+
+    println!("Connecting to {RPC}");
+    let ethereum =
+        ethexe_ethereum::Ethereum::new(RPC, router_address, signer, sender_address).await?;
+    let provider = ethereum.provider();
+    let router = IRouter::IRouterInstance::new(router_address.into(), provider.clone());
+    let code = p2pvpn_contract::WASM_BINARY;
+    let code_id = code_id_for(code);
+
+    println!("Uploading code");
+    let chain_id = provider
+        .get_chain_id()
+        .await
+        .context("failed to fetch chain id")?;
+    let upload = router.requestCodeValidation(code_id.into_bytes().into());
+    let upload = if chain_id == 31337 {
+        upload.sidecar(SidecarBuilder::<SimpleCoder>::from_slice(code).build()?)
+    } else {
+        let base_fee_per_blob_gas = provider
+            .get_fee_history(2, BlockNumberOrTag::Latest, &[] as &[f64])
+            .await
+            .context("failed to fetch blob fee history")?
+            .base_fee_per_blob_gas
+            .last()
+            .copied()
+            .context("blob fee history is missing base blob fee")?;
+
+        upload
+            .sidecar_7594(SidecarBuilder::<SimpleCoder>::from_slice(code).build_7594()?)
+            .max_fee_per_blob_gas(base_fee_per_blob_gas.saturating_mul(3))
+    };
+    upload
+        .send()
+        .await
+        .context("failed to submit code upload transaction")?
+        .try_get_receipt_check_reverted()
+        .await
+        .context("failed to upload code")?;
+
+    let router_client = ethereum.router();
+    let res = router_client.wait_for_code_validation(code_id).await?;
+    anyhow::ensure!(res.valid, "code validation failed");
+
+    println!("Creating program from {code_id} code ID");
+    let (_, actor_id) = router_client
+        .create_program(code_id, Default::default(), None)
+        .await
+        .context("failed to create program")?;
+
+    println!("Approving {actor_id} to spend VARA and top-up mirror balance");
+    ethereum
+        .wrapped_vara()
+        .approve(actor_id, 1000 * 10u128.pow(12))
+        .await?;
+    println!("Topping up mirror balance for {actor_id}");
+    ethereum
+        .mirror(actor_id)
+        .executable_balance_top_up(1000 * 10u128.pow(12))
+        .await?;
+    println!("Topped up");
+
+    println!("Initializing contract");
+    let (_, msg_id) = ethereum
+        .mirror(actor_id)
+        .send_message(p2pvpn_contract_client::io::Create::encode_params(), 0)
+        .await?;
+
+    let reply = ethereum.mirror(actor_id).wait_for_reply(msg_id).await?;
+    println!("Initialization reply received");
+    anyhow::ensure!(
+        reply.code.is_success(),
+        "contract initialization failed: code {}, message: {}",
+        reply.code,
+        std::str::from_utf8(&reply.payload)?
+    );
+
+    println!("Actor ID: {actor_id}");
+
     Ok(())
 }

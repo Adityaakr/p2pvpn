@@ -1,12 +1,12 @@
 mod contract;
 mod tui;
 mod vpn;
-use std::str::FromStr;
-
 use crate::{tui::signer, vpn::OpenVpnCredentials};
+use anyhow::Context;
 use clap::{Parser, Subcommand};
 use ethexe_ethereum::{primitives::Address, Ethereum};
 use gsigner::PrivateKey;
+use std::str::FromStr;
 
 #[derive(Parser)]
 #[command(name = "p2pvpn", about = "Decentralised VPN client")]
@@ -42,7 +42,7 @@ enum Commands {
 const VARA_ETH_VALIDATOR: &str = "wss://vara-eth-validator-2.gear-tech.io:9944";
 const ETH_RPC: &str = "wss://hoodi-reth-rpc.gear-tech.io/ws";
 const ROUTER_ADDRESS: &str = "0xBC888a8B050B9B76a985d91c815d2c4f2131a58A";
-const VPN_ADDRESS: &str = "0x000000000000000000000000037c5239b22fbc60905fbc6b94eb179fd6221bee";
+const VPN_ADDRESS: &str = "0x037c5239b22fbc60905fbc6b94eb179fd6221bee";
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -54,7 +54,8 @@ async fn main() -> anyhow::Result<()> {
             sender_address,
         } => {
             let signer = signer()?;
-            let router = Address::from_str(ROUTER_ADDRESS)?;
+            let router =
+                Address::from_str(ROUTER_ADDRESS).with_context(|| "Invalid router address")?;
 
             let eth = Ethereum::new(ETH_RPC, router.into(), signer, sender_address.into()).await?;
             let api = ethexe_sdk::VaraEthApi::new(ETH_RPC, eth).await?;
@@ -66,10 +67,23 @@ async fn main() -> anyhow::Result<()> {
                     "both --ovpn-username and --ovpn-password must be provided together"
                 ),
             };
-            tui::connect(api, gsigner::Address::from_str(VPN_ADDRESS)?, credentials).await?
+            let vpn_addr =
+                gsigner::Address::from_str(VPN_ADDRESS).with_context(|| "Invalid VPN address")?;
+            api.wrapped_vara()
+                .approve(vpn_addr.into(), 10000 * 10u128.pow(12))
+                .await?;
+            api.mirror(vpn_addr.into())
+                .executable_balance_top_up(10000 * 10u128.pow(12))
+                .await?;
+            tui::connect(
+                api,
+                gsigner::Address::from_str(VPN_ADDRESS).with_context(|| "Invalid VPN address")?,
+                credentials,
+            )
+            .await?
         }
         Commands::DeployContract { sender_address } => {
-            //tui::deploy(sender_address).await?;
+            tui::deploy(sender_address).await?;
         }
         Commands::ImportKey { private_key } => {
             tui::import_key(private_key).await?;
